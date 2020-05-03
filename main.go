@@ -3,19 +3,21 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
+	"presensi-asrama/config"
 	"strconv"
-	"text/template"
 	"time"
 
 	uuid "github.com/satori/go.uuid"
 	"golang.org/x/crypto/bcrypt"
+	"gopkg.in/mgo.v2/bson"
 )
 
 type user struct {
 	FullName string
 	UserName string
-	Bday     string
+	Bday     time.Time
 	Ds       string
 	Klp      string
 	Sex      string
@@ -29,25 +31,19 @@ type sesi struct {
 }
 
 type presensi struct {
+	Pid     string
 	Time    time.Time
 	Sesi    int
 	Generus map[string]string
 }
 
-var tpl *template.Template
-var dbUsers = map[string]user{}      // user ID, user
-var dbSessions = map[string]string{} // session ID, user ID
-var dbPresensi = map[string]presensi{}
-
-func init() {
-	tpl = template.Must(template.ParseGlob("templates/*"))
-	bs, _ := bcrypt.GenerateFromPassword([]byte("asd"), bcrypt.MinCost)
-	dbUsers["asd"] = user{"asd", "asd", "12/12/1996", "testDs", "testKlp", "l", bs}
+type session struct {
+	Sessionid string
+	Username  string
 }
 
 func main() {
 	http.HandleFunc("/", index)
-	http.HandleFunc("/bar", bar)
 	http.HandleFunc("/asrama", asrama)
 	http.HandleFunc("/signup", signup)
 	http.HandleFunc("/login", login)
@@ -72,16 +68,14 @@ func index(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// h, m, _ := time.Now().Clock()
-	// tnow := h*60 + m
+	h, m, _ := time.Now().Clock()
+	tnow := h*60 + m
 
 	//Asrama sessions
 	sesi1 := sesi{1, "08.00", 570}
 	sesi2 := sesi{2, "09.45", 675}
 	sesi3 := sesi{3, "13.30", 900}
 	sesi4 := sesi{4, "20.15", 1305}
-
-	tnow := sesi4.end - 10
 
 	var s sesi
 	switch {
@@ -120,16 +114,7 @@ func index(w http.ResponseWriter, req *http.Request) {
 		s,
 		msg,
 	}
-	tpl.ExecuteTemplate(w, "index.gohtml", data)
-}
-
-func bar(w http.ResponseWriter, req *http.Request) {
-	u := getUser(w, req)
-	if !alreadyLoggedIn(req) {
-		http.Redirect(w, req, "/", http.StatusSeeOther)
-		return
-	}
-	tpl.ExecuteTemplate(w, "bar.gohtml", u)
+	config.TPL.ExecuteTemplate(w, "index.gohtml", data)
 }
 
 func signup(w http.ResponseWriter, req *http.Request) {
@@ -143,38 +128,52 @@ func signup(w http.ResponseWriter, req *http.Request) {
 		// get form values
 		fn := req.FormValue("fullname")
 		un := req.FormValue("username")
-		bd := req.FormValue("birthday")
+		b := req.FormValue("birthday")
+		bd, _ := time.Parse("2006-01-02", b)
 		ds := req.FormValue("ds")
 		kp := req.FormValue("klp")
 		s := req.FormValue("sex")
 		p := req.FormValue("password")
 		// username taken?
-		if _, ok := dbUsers[un]; ok {
-			u = user{fn, un, bd, ds, kp, s, nil}
-			tpl.ExecuteTemplate(w, "signup.gohtml", u)
+		err := config.Users.Find(bson.M{"username": un}).One(&u)
+		if err != nil {
+			fmt.Println("signup not OK find-user")
+		}
+		if u.UserName != "" {
+			config.TPL.ExecuteTemplate(w, "signup.gohtml", u)
 			return
 		}
+
 		// create session
-		sID, _ := uuid.NewV4()
+		sID := uuid.NewV4()
 		c := &http.Cookie{
 			Name:  "session",
 			Value: sID.String(),
 		}
 		http.SetCookie(w, c)
-		dbSessions[c.Value] = un
-		// store user in dbUsers
+
+		d := session{c.Value, un}
+		err = config.Sessions.Insert(d)
+		if err != nil {
+			fmt.Println("signup not OK insert-sesssion")
+		}
+
+		// store user in db Users
 		bs, err := bcrypt.GenerateFromPassword([]byte(p), bcrypt.MinCost)
 		if err != nil {
 			http.Error(w, "Internal server error", http.StatusInternalServerError)
 			return
 		}
 		u = user{fn, un, bd, ds, kp, s, bs}
-		dbUsers[un] = u
+		err = config.Users.Insert(u)
+		if err != nil {
+			fmt.Println("signup not OK insert-user")
+		}
 		// redirect
 		http.Redirect(w, req, "/", http.StatusSeeOther)
 		return
 	}
-	tpl.ExecuteTemplate(w, "signup.gohtml", nil)
+	config.TPL.ExecuteTemplate(w, "signup.gohtml", nil)
 }
 
 func login(w http.ResponseWriter, req *http.Request) {
@@ -182,24 +181,27 @@ func login(w http.ResponseWriter, req *http.Request) {
 		http.Redirect(w, req, "/", http.StatusSeeOther)
 		return
 	}
-	// var u user
+	var u user
 	// process form submission
 	if req.Method == http.MethodPost {
 		un := req.FormValue("username")
 		p := req.FormValue("password")
 		// is there a username?
-		u, ok := dbUsers[un]
-		if !ok {
+		err := config.Users.Find(bson.M{"username": un}).One(&u)
+		if err != nil {
+			fmt.Println("login not OK find-user")
+		}
+		if u.UserName == "" {
 			d := struct {
 				Err string
 			}{
 				"unErr",
 			}
-			tpl.ExecuteTemplate(w, "login.gohtml", d)
+			config.TPL.ExecuteTemplate(w, "login.gohtml", d)
 			return
 		}
 		// does the entered password match the stored password?
-		err := bcrypt.CompareHashAndPassword(u.Password, []byte(p))
+		err = bcrypt.CompareHashAndPassword(u.Password, []byte(p))
 		if err != nil {
 			d := struct {
 				Err string
@@ -208,22 +210,27 @@ func login(w http.ResponseWriter, req *http.Request) {
 				"pwErr",
 				un,
 			}
-			tpl.ExecuteTemplate(w, "login.gohtml", d)
+			config.TPL.ExecuteTemplate(w, "login.gohtml", d)
 			return
 		}
 		// create session
-		sID, _ := uuid.NewV4()
+		sID := uuid.NewV4()
 		c := &http.Cookie{
 			Name:  "session",
 			Value: sID.String(),
 		}
 		http.SetCookie(w, c)
-		dbSessions[c.Value] = un
+		d := session{c.Value, un}
+		err = config.Sessions.Insert(d)
+		if err != nil {
+			fmt.Println("login not OK insert-session")
+		}
+
 		http.Redirect(w, req, "/", http.StatusSeeOther)
 		return
 	}
 
-	tpl.ExecuteTemplate(w, "login.gohtml", nil)
+	config.TPL.ExecuteTemplate(w, "login.gohtml", nil)
 }
 
 func logout(w http.ResponseWriter, req *http.Request) {
@@ -233,7 +240,10 @@ func logout(w http.ResponseWriter, req *http.Request) {
 	}
 	c, _ := req.Cookie("session")
 	// delete the session
-	delete(dbSessions, c.Value)
+	err := config.Sessions.Remove(bson.M{"sessionid": c.Value})
+	if err != nil {
+		fmt.Println("Error logout")
+	}
 	// remove the cookie
 	c = &http.Cookie{
 		Name:   "session",
@@ -250,6 +260,7 @@ func insertPresensi(w http.ResponseWriter, req *http.Request) {
 	u := getUser(w, req)
 
 	t := time.Now()
+	fmt.Println(t)
 	s, err := strconv.Atoi(v)
 	if err != nil {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -260,13 +271,34 @@ func insertPresensi(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	g := map[string]string{"name": u.FullName, "bday": u.Bday, "ds": u.Ds, "klp": u.Klp, "sex": u.Sex}
+
+	y := time.Now().Year() - u.Bday.Year()
+	var cls string
+	switch {
+	case y < 13:
+		cls = "Cabe Rawit"
+	case inBetween(y, 13, 15):
+		cls = "SMP"
+	case inBetween(y, 16, 18):
+		cls = "SMA"
+	case inBetween(y, 19, 25):
+		cls = "Lepas SMA"
+	case y > 25:
+		cls = "Dewasa"
+	}
+
+	g := map[string]string{"name": u.FullName, "class": cls, "ds": u.Ds, "klp": u.Klp, "sex": u.Sex}
 
 	var p presensi
 	pID := t.Format("010206") + strconv.Itoa(se) + u.UserName
-	if _, ok := dbPresensi[pID]; !ok {
-		p = presensi{t, se, g}
-		dbPresensi[pID] = p
+	// presensi already stored?
+	err = config.Presensi.Find(bson.M{"pid": pID}).One(&p)
+	if err != nil {
+		p = presensi{pID, t, se, g}
+		err = config.Presensi.Insert(p)
+		if err != nil {
+			fmt.Println("insertPresensi not OK presensi-insert")
+		}
 	}
 }
 

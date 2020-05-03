@@ -3,8 +3,8 @@
 package main
 
 import (
-	"fmt"
 	"net/http"
+	"strconv"
 	"text/template"
 	"time"
 
@@ -23,21 +23,21 @@ type user struct {
 }
 
 type sesi struct {
-	Name  string
+	Name  int
 	Start string
-	end   float64
+	end   int
 }
 
 type presensi struct {
 	Time    time.Time
-	Sesi    string
+	Sesi    int
 	Generus map[string]string
 }
 
 var tpl *template.Template
-var dbUsers = map[string]user{}        // user ID, user
-var dbSessions = map[string]string{}   // session ID, user ID
-var dbPresensi = map[string]presensi{} // session ID, user ID
+var dbUsers = map[string]user{}      // user ID, user
+var dbSessions = map[string]string{} // session ID, user ID
+var dbPresensi = map[string]presensi{}
 
 func init() {
 	tpl = template.Must(template.ParseGlob("templates/*"))
@@ -73,25 +73,25 @@ func index(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// h, m, _ := time.Now().Clock()
-	// tnow := float64(h) + float64(m)/60.0
+	// tnow := h*60 + m
 
 	//Asrama sessions
-	sesi1 := sesi{"1", "08.00", 9.0 + 30.0/60.0}
-	sesi2 := sesi{"2", "09.45", 11.0 + 15.0/60.0}
-	sesi3 := sesi{"3", "13.30", 15.0}
-	sesi4 := sesi{"4", "20.15", 21.0 + 45.0/60.0}
+	sesi1 := sesi{1, "08.00", 570}
+	sesi2 := sesi{2, "09.45", 675}
+	sesi3 := sesi{3, "13.30", 900}
+	sesi4 := sesi{4, "20.15", 1305}
 
-	tnow := sesi4.end - 0.1
+	tnow := sesi4.end - 10
 
 	var s sesi
 	switch {
-	case tnow <= sesi1.end-0.25:
+	case tnow <= sesi1.end-15:
 		s = sesi1
-	case inBetween(tnow, sesi1.end-0.24, sesi2.end):
+	case inBetween(tnow, sesi1.end-14, sesi2.end):
 		s = sesi2
-	case inBetween(tnow, sesi2.end+0.01, sesi3.end):
+	case inBetween(tnow, sesi2.end+1, sesi3.end):
 		s = sesi3
-	case inBetween(tnow, sesi3.end+0.01, sesi4.end):
+	case inBetween(tnow, sesi3.end+1, sesi4.end):
 		s = sesi4
 	case tnow > sesi4.end:
 		s = sesi1
@@ -99,11 +99,13 @@ func index(w http.ResponseWriter, req *http.Request) {
 
 	// Msg for html-form
 	var msg string
-	if inBetween(tnow, sesi1.end-2, sesi1.end-0.26) || inBetween(tnow, sesi2.end-2, sesi2.end) || inBetween(tnow, sesi3.end-2, sesi3.end) || inBetween(tnow, sesi4.end-2, sesi4.end) {
-		if (time.Now().Weekday().String() == "Friday") && (inBetween(tnow, sesi2.end-2, sesi2.end)) {
+	if inBetween(tnow, sesi1.end-120, sesi1.end-16) || inBetween(tnow, sesi2.end-120, sesi2.end) || inBetween(tnow, sesi3.end-120, sesi3.end) || inBetween(tnow, sesi4.end-120, sesi4.end) {
+		if (time.Now().Weekday().String() == "Friday") && (inBetween(tnow, sesi2.end-120, sesi2.end)) {
 			msg = `khusus hari Jumat ditiadakan.</p><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p>`
 		} else {
-			msg = `klik "Masuk" untuk melakukan presensi.</p><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p><p class="hint-text"><a href="/asrama?q=` + s.Name + `"><button type="button" class="btn btn-success btn-lg btn-block">Masuk</button><a></p>`
+			se := s.Name * 335143
+			sName := strconv.Itoa(se)
+			msg = `klik "Masuk" untuk melakukan presensi.</p><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p><p class="hint-text"><a href="/asrama?q=` + sName + `"><button type="button" class="btn btn-success btn-lg btn-block">Masuk</button><a></p>`
 		}
 	} else {
 		msg = `daftar hadir dibuka 30 menit sebelum sesi dimulai. </p><br><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p>`
@@ -118,7 +120,6 @@ func index(w http.ResponseWriter, req *http.Request) {
 		s,
 		msg,
 	}
-	fmt.Println(dbPresensi)
 	tpl.ExecuteTemplate(w, "index.gohtml", data)
 }
 
@@ -249,18 +250,27 @@ func insertPresensi(w http.ResponseWriter, req *http.Request) {
 	u := getUser(w, req)
 
 	t := time.Now()
-	s := v
+	s, err := strconv.Atoi(v)
+	if err != nil {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	se := s / 335143
+	if se > 4 {
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
 	g := map[string]string{"name": u.FullName, "bday": u.Bday, "ds": u.Ds, "klp": u.Klp, "sex": u.Sex}
 
 	var p presensi
-	pID := t.Format("010206") + s + u.UserName
+	pID := t.Format("010206") + strconv.Itoa(se) + u.UserName
 	if _, ok := dbPresensi[pID]; !ok {
-		p = presensi{t, s, g}
+		p = presensi{t, se, g}
 		dbPresensi[pID] = p
 	}
 }
 
-func inBetween(i, min, max float64) bool {
+func inBetween(i, min, max int) bool {
 	if (i >= min) && (i <= max) {
 		return true
 	}

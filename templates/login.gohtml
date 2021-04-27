@@ -85,7 +85,7 @@
 {{$unV:= ""}}
 {{if .}}
 	{{if eq .Err "unErr"}}
-		{{$un = "!! Username belum terdaftar, silakan registrasi"}}
+		{{$un = "!! Username tidak terdaftar, silakan registrasi"}}
 	{{else if eq .Err "pwErr"}}
 		{{$unV = .Un}}
 		{{$pw = "!! Password tidak sesuai, ulangi password"}}

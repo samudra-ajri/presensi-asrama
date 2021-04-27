@@ -102,7 +102,7 @@ func index(w http.ResponseWriter, req *http.Request) {
 			msg = `klik "Masuk" untuk melakukan presensi.</p><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p><p class="hint-text"><a href="/asrama?q=` + sName + `"><button type="button" class="btn btn-success btn-lg btn-block">Masuk</button><a></p>`
 		}
 	} else {
-		msg = `daftar hadir dibuka 30 menit sebelum sesi dimulai. </p><br><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p>`
+		msg = `daftar hadir dibuka 10 menit sebelum sesi dimulai. </p><br><p class="hint-text" style="font-size:20px;">الحمد لله جزاك الله خيرا</p>`
 	}
 
 	data := struct {
